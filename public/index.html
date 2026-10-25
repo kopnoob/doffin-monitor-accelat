@@ -999,25 +999,71 @@
 </style>
 <script>
 (function(){
-  // Enkel client-side passordbeskyttelse. Ikke ekte sikkerhet — bare en dørstopper.
+  // Passordsperre. Passordet er også Accelat sin nøkkel til databasen: det sjekkes
+  // mot Supabase (der bare SHA-256 av det er lagret) og sendes som x-doffin-key på
+  // alle kall. Uten riktig passord gir anon-nøkkelen ingen tilgang til dataene.
   var KEY = 'dmpw';
-  var PW = 'kongenjan';
-  if (sessionStorage.getItem(KEY) === PW) return;
-  for (var i = 0; i < 3; i++) {
-    var entry = prompt('Passord:');
-    if (entry === null) break;
-    if (entry === PW) {
-      sessionStorage.setItem(KEY, PW);
+  var SB_URL = 'https://gicioyjyyoxlqaiqziwh.supabase.co';
+  var SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpY2lveWp5eW94bHFhaXF6aXdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NDM1MTcsImV4cCI6MjA5MDIxOTUxN30.cP3DuXw-wtTtitNMKKvvKu1aQn-MRYqW2O7GyG5ipjQ';
+  window.DOFFIN_SB = { url: SB_URL, anon: SB_ANON };
+  var root = document.documentElement;
+  root.style.visibility = 'hidden';
+
+  // true = riktig passord, false = feil, null = fikk ikke svar
+  function check(pw) {
+    return fetch(SB_URL + '/rest/v1/rpc/doffin_tenant', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_ANON,
+        'Authorization': 'Bearer ' + SB_ANON,
+        'Content-Type': 'application/json',
+        'x-doffin-key': pw
+      },
+      body: '{}'
+    }).then(function(r) { return r.ok ? r.json().then(function(t) { return t === 'accelat'; }) : null; })
+      .catch(function() { return null; });
+  }
+
+  function deny() {
+    document.documentElement.innerHTML =
+      '<head><meta charset="UTF-8"><title>Tilgang avvist</title></head>' +
+      '<body style="font-family:system-ui,sans-serif;padding:3rem;text-align:center;color:#333">' +
+      '<h1 style="font-weight:500">Tilgang avvist</h1>' +
+      '<p>Last siden p\u00E5 nytt for \u00E5 pr\u00F8ve igjen.</p>' +
+      '</body>';
+    root.style.visibility = '';
+  }
+
+  window.DOFFIN_KEY_READY = new Promise(function(resolve) {
+    function accept(pw) {
+      try { sessionStorage.setItem(KEY, pw); } catch (e) {}
+      root.style.visibility = '';
+      resolve(pw);
+    }
+    var tries = 0;
+    function ask() {
+      if (tries >= 3) return deny();
+      tries++;
+      var entry = prompt('Passord:');
+      if (entry === null || entry === '') return entry === null ? deny() : ask();
+      check(entry).then(function(ok) { if (ok) accept(entry); else ask(); });
+    }
+
+    var stored = null;
+    try { stored = sessionStorage.getItem(KEY); } catch (e) {}
+    if (stored) {
+      // Husket i denne fanen: slipp inn med en gang, og sjekk i bakgrunnen.
+      accept(stored);
+      check(stored).then(function(ok) {
+        if (ok === false) {
+          try { sessionStorage.removeItem(KEY); } catch (e) {}
+          location.reload();
+        }
+      });
       return;
     }
-  }
-  document.documentElement.innerHTML =
-    '<head><meta charset="UTF-8"><title>Tilgang avvist</title></head>' +
-    '<body style="font-family:system-ui,sans-serif;padding:3rem;text-align:center;color:#333">' +
-    '<h1 style="font-weight:500">Tilgang avvist</h1>' +
-    '<p>Last siden p\u00E5 nytt for \u00E5 pr\u00F8ve igjen.</p>' +
-    '</body>';
-  throw new Error('access denied');
+    ask();
+  });
 })();
 </script>
 </head>
@@ -1136,9 +1182,11 @@
   'use strict';
 
   // ── Supabase config ────────────────────────
-  const SUPABASE_URL = 'https://gicioyjyyoxlqaiqziwh.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpY2lveWp5eW94bHFhaXF6aXdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NDM1MTcsImV4cCI6MjA5MDIxOTUxN30.cP3DuXw-wtTtitNMKKvvKu1aQn-MRYqW2O7GyG5ipjQ';
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // Satt i passordsperren øverst. sb lages når passordet (= nøkkelen) er godkjent.
+  const SUPABASE_URL = window.DOFFIN_SB.url;
+  const SUPABASE_ANON_KEY = window.DOFFIN_SB.anon;
+  let DOFFIN_KEY = '';
+  let sb = null;
 
   // ── State ───────────────────────────────────
   let currentPage = 'dps';
@@ -1511,10 +1559,10 @@
     // Fetch DPS, open competitions, user data and AI analyses in parallel
     const [dpsResp, openResp, userMap] = await Promise.all([
       fetch(SUPABASE_URL + '/functions/v1/doffin-proxy' + cpvQuery, {
-        headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'x-doffin-key': DOFFIN_KEY }
       }),
       fetch(SUPABASE_URL + '/functions/v1/doffin-proxy-open' + cpvQuery, {
-        headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'x-doffin-key': DOFFIN_KEY }
       }),
       fetchUserMap(),
       fetchAiAnalyses()
@@ -2097,7 +2145,13 @@
     filterByBuyer: filterByBuyer
   });
 
-  init();
+  window.DOFFIN_KEY_READY.then(function(key) {
+    DOFFIN_KEY = key;
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { 'x-doffin-key': key } }
+    });
+    init();
+  });
 })();
 </script>
 </body>
