@@ -1136,8 +1136,8 @@
   'use strict';
 
   // ── Supabase config ────────────────────────
-  const SUPABASE_URL = 'https://gauryjjzpnqnarbhprah.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhdXJ5amp6cG5xbmFyYmhwcmFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxNTQ2ODEsImV4cCI6MjEwMjczMDY4MX0.GAyrez3J-R9dvyjHVOn9gqsdLa3vrfOBc7Fi0QGUnHo';
+  const SUPABASE_URL = 'https://gicioyjyyoxlqaiqziwh.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpY2lveWp5eW94bHFhaXF6aXdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NDM1MTcsImV4cCI6MjA5MDIxOTUxN30.cP3DuXw-wtTtitNMKKvvKu1aQn-MRYqW2O7GyG5ipjQ';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   // ── State ───────────────────────────────────
@@ -1468,7 +1468,7 @@
 
   async function fetchUserMap() {
     const { data: userData } = await sb
-      .from('user_notices')
+      .from('accelat_user_notices')
       .select('*');
     const userMap = {};
     if (userData) {
@@ -1496,13 +1496,24 @@
     return;
   }
 
+  // Søkefunksjonene deles med Commit sin monitor; Accelat sine CPV-koder sendes som ?cpv=
+  async function fetchCpvQuery() {
+    const { data, error } = await sb
+      .from('accelat_cpv_codes')
+      .select('code')
+      .order('code');
+    if (error) throw new Error('CPV ' + error.message);
+    return '?cpv=' + encodeURIComponent((data || []).map(r => r.code).join(','));
+  }
+
   async function fetchAllData() {
+    const cpvQuery = await fetchCpvQuery();
     // Fetch DPS, open competitions, user data and AI analyses in parallel
     const [dpsResp, openResp, userMap] = await Promise.all([
-      fetch(SUPABASE_URL + '/functions/v1/doffin-proxy', {
+      fetch(SUPABASE_URL + '/functions/v1/doffin-proxy' + cpvQuery, {
         headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
       }),
-      fetch(SUPABASE_URL + '/functions/v1/doffin-proxy-open', {
+      fetch(SUPABASE_URL + '/functions/v1/doffin-proxy-open' + cpvQuery, {
         headers: { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
       }),
       fetchUserMap(),
@@ -1528,7 +1539,7 @@
     for (const n of dpsNotices) {
       if (n.mistagged && !n.userComment && !n.userStatus) {
         n.userComment = 'feiltagget';
-        sb.from('user_notices').upsert({
+        sb.from('accelat_user_notices').upsert({
           notice_id: n.id,
           status: null,
           comment: 'feiltagget',
@@ -1556,14 +1567,14 @@
     };
     if (subStatus !== undefined) row.sub_status = subStatus;
     const { error } = await sb
-      .from('user_notices')
+      .from('accelat_user_notices')
       .upsert(row, { onConflict: 'notice_id' });
     if (error) throw error;
   }
 
   async function deleteUserData(id) {
     const { error } = await sb
-      .from('user_notices')
+      .from('accelat_user_notices')
       .delete()
       .eq('notice_id', id);
     if (error) throw error;
@@ -1911,7 +1922,7 @@
 
   async function loadCpvCodes() {
     const { data, error } = await sb
-      .from('cpv_codes')
+      .from('accelat_cpv_codes')
       .select('code')
       .order('code');
     if (error) {
@@ -1941,7 +1952,7 @@
       return;
     }
     const { error } = await sb
-      .from('cpv_codes')
+      .from('accelat_cpv_codes')
       .upsert({ code: code }, { onConflict: 'code' });
     if (error) {
       showToast('Kunne ikke legge til CPV-kode');
@@ -1954,7 +1965,7 @@
 
   window.removeCpvCode = async function(code) {
     const { error } = await sb
-      .from('cpv_codes')
+      .from('accelat_cpv_codes')
       .delete()
       .eq('code', code);
     if (error) {
